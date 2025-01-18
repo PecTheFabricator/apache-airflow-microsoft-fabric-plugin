@@ -7,13 +7,13 @@ import aiohttp
 import requests
 from asgiref.sync import sync_to_async
 from tenacity import retry, stop_after_attempt, wait_exponential
-
+import logging
 from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
 from airflow.models import Connection
 from airflow.utils.session import provide_session
-
-FABRIC_SCOPES = "https://api.fabric.microsoft.com/Item.Execute.All https://api.fabric.microsoft.com/Item.ReadWrite.All offline_access openid profile"
+from msal import ConfidentialClientApplication
+FABRIC_SCOPES = ["https://api.fabric.microsoft.com/.default"]
 
 
 @provide_session
@@ -94,6 +94,25 @@ class FabricHook(BaseHook):
         self.retry_delay = retry_delay
         self.cached_access_token: dict[str, str | None | int] = {"access_token": None, "expiry_time": 0}
         super().__init__()
+    def __get_confidencial_token(self) -> str:
+        connection = self.get_connection(self.conn_id)
+        tenant_id = connection.extra_dejson.get("tenantId")
+        client_id = connection.login
+        client_secret = connection.extra_dejson.get("clientSecret")
+        scopes = connection.extra_dejson.get("scopes", FABRIC_SCOPES)
+        app = ConfidentialClientApplication(
+            client_id,
+            client_credential=client_secret,
+            authority=f"https://login.microsoftonline.com/{tenant_id}")
+        result = app.acquire_token_for_client(FABRIC_SCOPES)
+        if "access_token" in result:
+            access_token = result["access_token"]
+            return access_token
+        else:
+                print(result.get("error"))  
+                print(result.get("error_description"))
+                print(result.get("correlation_id"))  # You may need this when reporting a bug
+        print(f"This is the current access token: {access_token}")
 
     def _get_token(self) -> str:
         """
@@ -162,7 +181,7 @@ class FabricHook(BaseHook):
         :return: dict: Headers with the authorization token.
         """
         return {
-            "Authorization": f"Bearer {self._get_token()}",
+            "Authorization": f"Bearer {self.__get_confidencial_token()}",
         }
 
     def get_item_run_details(self, location: str) -> None:
@@ -329,7 +348,25 @@ class FabricAsyncHook(FabricHook):
 
             except aiohttp.ClientResponseError as e:
                 raise AirflowException("Request to %s failed with error %s", (url, str(e)))
-
+    async def _async__get_confidencial_token(self):
+        connection = self.get_connection(self.conn_id)
+        tenant_id = connection.extra_dejson.get("tenantId")
+        client_id = connection.login
+        client_secret = connection.extra_dejson.get("clientSecret")
+        scopes = connection.extra_dejson.get("scopes", FABRIC_SCOPES)
+        app = ConfidentialClientApplication(
+            client_id,
+            client_credential=client_secret,
+            authority=f"https://login.microsoftonline.com/{tenant_id}")
+        result = app.acquire_token_for_client(FABRIC_SCOPES)
+        if "access_token" in result:
+            access_token = result["access_token"]
+            return access_token
+        else:
+                print(result.get("error"))  
+                print(result.get("error_description"))
+                print(result.get("correlation_id"))  # You may need this when reporting a bug
+        logging.info(f"This is the current access token: {access_token}")
     async def _async_get_token(self) -> str:
         """
         Get the access token from the refresh token.
@@ -384,8 +421,8 @@ class FabricAsyncHook(FabricHook):
 
         :return: dict: Headers with the authorization token.
         """
-        access_token = await self._async_get_token()
-
+        access_token = await self._async__get_confidencial_token()
+        print(f"Access token: {access_token}")
         return {
             "Authorization": f"Bearer {access_token}",
         }
