@@ -22,3 +22,6 @@ classifiers = [
 packages = ["src"]
 [project.urls]
 Homepage = "https://github.com/ambika-garg/apache-airflow-microsoft-fabric-plugin.git"
+dependencies = [
+  "msal==1.31.1"
+]

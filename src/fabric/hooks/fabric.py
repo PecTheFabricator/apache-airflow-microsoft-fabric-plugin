@@ -94,7 +94,8 @@ class FabricHook(BaseHook):
         self.retry_delay = retry_delay
         self.cached_access_token: dict[str, str | None | int] = {"access_token": None, "expiry_time": 0}
         super().__init__()
-    def __get_confidencial_token(self) -> str:
+
+    def _get_confidencial_token(self) -> str:
         connection = self.get_connection(self.conn_id)
         tenant_id = connection.extra_dejson.get("tenantId")
         client_id = connection.login
@@ -114,65 +115,6 @@ class FabricHook(BaseHook):
                 print(result.get("correlation_id"))  # You may need this when reporting a bug
         print(f"This is the current access token: {access_token}")
 
-    def _get_token(self) -> str:
-        """
-        If cached access token isn't expired, return it.
-
-        Generate OAuth access token using refresh token in connection details and cache it.
-        Update the connection with the new refresh token.
-
-        :return: The access token.
-        """
-        access_token = self.cached_access_token.get("access_token")
-        expiry_time = self.cached_access_token.get("expiry_time")
-
-        if access_token and expiry_time > time.time():
-            return str(access_token)
-
-        connection = self.get_connection(self.conn_id)
-        tenant_id = connection.extra_dejson.get("tenantId")
-        client_id = connection.login
-        client_secret = connection.extra_dejson.get("clientSecret")
-        scopes = connection.extra_dejson.get("scopes", FABRIC_SCOPES)
-        refresh_token = connection.password
-
-        data = {
-            "grant_type": "refresh_token",
-            "client_id": client_id,
-            "refresh_token": refresh_token,
-            "scope": scopes,
-        }
-        if client_secret:
-            data["client_secret"] = client_secret
-
-        response = self._send_request(
-            "POST",
-            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
-            data=data,
-        )
-
-        try:
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            msg = f"Response: {e.response.content.decode()} Status Code: {e.response.status_code}"
-            raise AirflowException(msg)
-
-        response_data = response.json()
-
-        api_access_token: str | None = response_data.get("access_token")
-        api_refresh_token: str | None = response_data.get("refresh_token")
-
-        if not api_access_token or not api_refresh_token:
-            raise AirflowException("Failed to obtain access or refresh token from API.")
-
-        update_conn(self.conn_id, api_refresh_token)
-
-        self.cached_access_token = {
-            "access_token": api_access_token,
-            "expiry_time": time.time() + response_data.get("expires_in"),
-        }
-
-        return api_access_token
 
     def get_headers(self) -> dict[str, str]:
         """
@@ -181,7 +123,7 @@ class FabricHook(BaseHook):
         :return: dict: Headers with the authorization token.
         """
         return {
-            "Authorization": f"Bearer {self.__get_confidencial_token()}",
+            "Authorization": f"Bearer {self._get_confidencial_token()}",
         }
 
     def get_item_run_details(self, location: str) -> None:
@@ -348,7 +290,7 @@ class FabricAsyncHook(FabricHook):
 
             except aiohttp.ClientResponseError as e:
                 raise AirflowException("Request to %s failed with error %s", (url, str(e)))
-    async def _async__get_confidencial_token(self):
+    async def _async_get_confidencial_token(self):
         connection = self.get_connection(self.conn_id)
         tenant_id = connection.extra_dejson.get("tenantId")
         client_id = connection.login
@@ -367,54 +309,7 @@ class FabricAsyncHook(FabricHook):
                 print(result.get("error_description"))
                 print(result.get("correlation_id"))  # You may need this when reporting a bug
         logging.info(f"This is the current access token: {access_token}")
-    async def _async_get_token(self) -> str:
-        """
-        Get the access token from the refresh token.
-
-        :return: The access token.
-        """
-        cached_token = self.cached_access_token.get("access_token")
-        expiry_time = self.cached_access_token.get("expiry_time")
-
-        if isinstance(cached_token, str) and isinstance(expiry_time, float) and expiry_time > time.time():
-            return str(cached_token)
-
-        connection = await sync_to_async(self.get_connection)(self.conn_id)
-        tenant_id = connection.extra_dejson.get("tenantId")
-        client_id = connection.login
-        client_secret = connection.extra_dejson.get("clientSecret")
-        refresh_token = connection.password
-        scopes = connection.extra_dejson.get("scopes", FABRIC_SCOPES)
-
-        data = {
-            "grant_type": "refresh_token",
-            "client_id": client_id,
-            "refresh_token": refresh_token,
-            "scope": scopes,
-        }
-        if client_secret:
-            data["client_secret"] = client_secret
-
-        response = await self._async_send_request(
-            "POST",
-            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
-            data=data,
-        )
-        api_access_token: str | None = response.get("access_token")
-        api_refresh_token: str | None = response.get("refresh_token")
-
-        if not api_access_token or not api_refresh_token:
-            raise AirflowException("Failed to obtain access or refresh token from API.")
-
-        await sync_to_async(update_conn)(self.conn_id, api_refresh_token)
-
-        self.cached_access_token = {
-            "access_token": api_access_token,
-            "expiry_time": time.time() + response.get("expires_in"),
-        }
-
-        return api_access_token
-
+   
     async def async_get_headers(self) -> dict[str, str]:
         """
         Form of auth headers based on OAuth token.
